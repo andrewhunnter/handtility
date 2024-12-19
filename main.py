@@ -14,9 +14,11 @@ mp_drawing = mp.solutions.drawing_utils
 keyboard = Controller()
 
 # Add these variables after keyboard initialization
-COOLDOWN_DURATION = 1.0  # 1 second cooldown
+COOLDOWN_DURATION = 2.5  # 2.5 second cooldown between gestures
 last_gesture_time = 0
 gesture_count = 0  # Track total gestures
+cooldown_start_time = 0
+is_in_cooldown = False
 
 def press_with_option(key):
     """Helper function to press a key with the Option (Alt) modifier"""
@@ -56,52 +58,36 @@ def check_permissions():
         print(f"Technical details: {e}")
         return False
 
-def add_ui_overlay(frame, gesture_count):
-    # Get frame dimensions
+def add_ui_overlay(frame, gesture_count, is_in_cooldown, time_remaining):
     height, width = frame.shape[:2]
-    
-    # Create semi-transparent overlay for the top bar
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (width, 60), (33, 33, 33), -1)
-    
-    # Add gradient effect
-    gradient = np.linspace(0.3, 0, 60)
-    for i in range(60):
-        overlay[i, :] = overlay[i, :] * gradient[i]
-    
-    # Blend the overlay
-    alpha = 0.85
-    frame = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
-    
-    # Font settings
     font = cv2.FONT_HERSHEY_SIMPLEX
+    line_color = (100, 100, 100)
     
-    # Add gesture count with icon
-    gesture_text = f"Gestures Detected: {gesture_count}"
-    cv2.putText(frame, gesture_text, (20, 40), font, 0.7, (255, 255, 255), 2)
+    # Add semi-transparent overlay at the top
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (width, 60), (0, 0, 0), -1)
+    frame = cv2.addWeighted(overlay, 0.3, frame, 0.7, 0)
     
-    # Add status indicator and text
-    cooldown_remaining = max(0, COOLDOWN_DURATION - (time.time() - last_gesture_time))
-    if cooldown_remaining > 0:
-        status_color = (0, 165, 255)  # Orange
-        status_text = f"Cooldown: {cooldown_remaining:.1f}s"
+    # Add gesture count (top left)
+    cv2.putText(frame, f"Gestures: {gesture_count}", (20, 40), font, 0.8, (255, 255, 255), 1)
+    
+    # Add cooldown indicator (top right)
+    if is_in_cooldown:
+        cooldown_text = f"Cooldown: {time_remaining:.1f}s"
+        cv2.putText(frame, cooldown_text, (width - 200, 40), font, 0.8, (0, 0, 255), 1)
     else:
-        status_color = (0, 255, 0)  # Green
-        status_text = "Ready"
+        cv2.putText(frame, "Ready", (width - 200, 40), font, 0.8, (0, 255, 0), 1)
     
-    # Draw status circle
-    cv2.circle(frame, (width - 120, 30), 8, status_color, -1)
-    
-    # Add status text
-    cv2.putText(frame, status_text, (width - 100, 40), font, 0.7, status_color, 2)
-    
-    # Add separator line with gradient
-    line_color = (255, 255, 255, 64)
+    # Add separator line
     cv2.line(frame, (0, 60), (width, 60), line_color, 1)
     
-    # Add gesture key (bottom left)
-    cv2.putText(frame, "👍 = Split Left", (20, height - 60), font, 0.6, (255, 255, 255), 1)
-    cv2.putText(frame, "👎 = Split Right", (20, height - 30), font, 0.6, (255, 255, 255), 1)
+    # Add gesture key (bottom)
+    cv2.putText(frame, "👍 = Split Left", (20, height - 120), font, 0.6, (255, 255, 255), 1)
+    cv2.putText(frame, "👎 = Split Right", (20, height - 90), font, 0.6, (255, 255, 255), 1)
+    cv2.putText(frame, "☝️ = Option + 1", (20, height - 60), font, 0.6, (255, 255, 255), 1)
+    cv2.putText(frame, "✌️ = Option + 2", (20, height - 30), font, 0.6, (255, 255, 255), 1)
+    cv2.putText(frame, "🤟 = Option + 3", (width - 200, height - 60), font, 0.6, (255, 255, 255), 1)
+    cv2.putText(frame, "🖖 = Option + 4", (width - 200, height - 30), font, 0.6, (255, 255, 255), 1)
     
     return frame
 
@@ -116,10 +102,19 @@ def main():
     # Initialize gesture count and cooldown
     global gesture_count, last_gesture_time
     
+    # Fix: Initialize gesture_count as an integer instead of a dictionary
+    gesture_count = 0  # Changed from gesture_count = {}
+    is_in_cooldown = False
+    cooldown_start_time = 0
+    
     print("Press 'q' to quit.")
     print("Gestures:")
     print("- Thumbs Up: Option + A (left split)")
     print("- Thumbs Down: Option + L (right split)")
+    print("- One Finger: Option + 1")
+    print("- Two Fingers: Option + 2")
+    print("- Three Fingers: Option + 3")
+    print("- Four Fingers: Option + 4")
     
     while cap.isOpened():
         ret, frame = cap.read()
@@ -127,7 +122,7 @@ def main():
             break
 
         # Add UI overlay
-        frame = add_ui_overlay(frame, gesture_count)
+        frame = add_ui_overlay(frame, gesture_count, is_in_cooldown, COOLDOWN_DURATION - (time.time() - cooldown_start_time))
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(frame_rgb)
@@ -140,10 +135,13 @@ def main():
                 
                 # Check cooldown and gesture change
                 current_time = time.time()
-                if (gesture != last_gesture and 
-                    gesture != "UNKNOWN" and  # Only trigger on valid gestures
-                    current_time - last_gesture_time >= COOLDOWN_DURATION):
-                    
+                time_since_last = current_time - last_gesture_time
+                
+                # Update cooldown status
+                is_in_cooldown = time_since_last < COOLDOWN_DURATION
+                time_remaining = COOLDOWN_DURATION - time_since_last if is_in_cooldown else 0
+                
+                if not is_in_cooldown and gesture != last_gesture:
                     if gesture == "THUMBS_UP":
                         press_with_option('a')
                         print("Triggered: Option + A")
@@ -151,6 +149,22 @@ def main():
                     elif gesture == "THUMBS_DOWN":
                         press_with_option('l')
                         print("Triggered: Option + L")
+                        gesture_count += 1
+                    elif gesture == "ONE_FINGER":
+                        press_with_option('1')
+                        print("Triggered: Option + 1")
+                        gesture_count += 1
+                    elif gesture == "TWO_FINGERS":
+                        press_with_option('2')
+                        print("Triggered: Option + 2")
+                        gesture_count += 1
+                    elif gesture == "THREE_FINGERS":
+                        press_with_option('3')
+                        print("Triggered: Option + 3")
+                        gesture_count += 1
+                    elif gesture == "FOUR_FINGERS":
+                        press_with_option('4')
+                        print("Triggered: Option + 4")
                         gesture_count += 1
                     
                     last_gesture = gesture

@@ -11,7 +11,6 @@ A Python application that uses computer vision to detect hand gestures and contr
   - System status and cooldown
   - Gesture guide
 - Built-in cooldown system to prevent accidental triggers
-- Permission checking for keyboard control
 
 ## Supported Gestures
 
